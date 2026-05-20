@@ -822,12 +822,21 @@ class PA4PlannerNode(DTROS):
 
             # ─────────────────────────────────────────────────────────────────
             # Step 2: SENSE in the forward direction.
+            # Poll _sense_obstacles() throughout sense_pause so the ToF stable
+            # counter has multiple ticks to accumulate — a single call after
+            # sleep(sense_pause) cannot reach stable_readings > 1.
             # ─────────────────────────────────────────────────────────────────
             rospy.loginfo(f"[PA4] Sensing at waypoint {wp_idx} …")
             self._update_viz(self._get_pose(), active_path, None, None)
-            rospy.sleep(self.sense_pause)
-
-            new_obs = self._sense_obstacles()
+            new_obs: List[Tuple[float, float]] = []
+            sense_rate = rospy.Rate(self.move_rate)
+            sense_deadline = rospy.Time.now() + rospy.Duration(self.sense_pause)
+            while rospy.Time.now() < sense_deadline:
+                hits = self._sense_obstacles()
+                if hits:
+                    new_obs = hits
+                    break
+                sense_rate.sleep()
 
             # ─────────────────────────────────────────────────────────────────
             # Step 3: If obstacle detected → update map → REPLAN.

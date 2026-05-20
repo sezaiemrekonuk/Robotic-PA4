@@ -88,9 +88,9 @@ tof:
   enabled: true            # subscribe to the ToF and register hits
   topic: ""                # empty → /{veh}/front_center_tof_driver_node/range
   register_min: 0.05       # m — ignore readings closer than this (sensor dead-zone)
-  register_max: 0.35       # m — ignore readings farther than this (walls, noise).
+  register_max: 0.55       # m — ignore readings farther than this (walls, noise).
                            # Must leave room to brake before the obstacle.
-  stable_readings: 2       # require N consecutive in-band reads before registering
+  stable_readings: 1       # require N consecutive in-band reads before registering
   stale_timeout: 1.0       # s — reading older than this is treated as missing
   dedup_radius: 0.18       # m — don't re-register if existing obstacle is this
                            # close (≥ robot.radius + safety_margin recommended)
