@@ -34,7 +34,7 @@ class DWAPlanner:
         # Only penalise obstacle proximity below this distance; no reward for being far.
         self.clearance_threshold = cfg.get("clearance_threshold", 0.30)
 
-    # ── Public API ───────────────────────────────────────────────────────────
+    # Public API
 
     def plan(
         self,
@@ -83,7 +83,7 @@ class DWAPlanner:
 
         return best_v, best_om, all_trajs, best_traj
 
-    # ── Internals ────────────────────────────────────────────────────────────
+    # Internals
 
     def _window(self, cur: float, acc: float, lo: float, hi: float) -> Tuple:
         w_lo = max(lo, cur - acc * self.dt)

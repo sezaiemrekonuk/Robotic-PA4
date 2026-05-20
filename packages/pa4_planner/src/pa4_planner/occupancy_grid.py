@@ -19,7 +19,7 @@ class OccupancyGrid:
         # (cx, cy, inflated_radius) for every obstacle added
         self.obstacles: List[Tuple[float, float, float]] = []
 
-    # ── Coordinate conversion ────────────────────────────────────────────────
+    # Coordinate conversion
 
     def world_to_cell(self, x: float, y: float) -> Tuple[int, int]:
         col = int(x / self.res)
@@ -32,7 +32,7 @@ class OccupancyGrid:
     def cell_to_world(self, row: int, col: int) -> Tuple[float, float]:
         return (col + 0.5) * self.res, (row + 0.5) * self.res
 
-    # ── Obstacle management ──────────────────────────────────────────────────
+    # Obstacle management
 
     def add_obstacle(self, cx: float, cy: float, inflate_radius: float) -> None:
         """Mark cells within inflate_radius as OCCUPIED, outer ring as INFLATED."""
@@ -57,7 +57,7 @@ class OccupancyGrid:
                 elif dist <= inflate_radius * 1.4 and self.grid[r, c] == self.FREE:
                     self.grid[r, c] = self.INFLATED
 
-    # ── Queries ──────────────────────────────────────────────────────────────
+    # Queries
 
     def is_free_cell(self, row: int, col: int) -> bool:
         if not (0 <= row < self.rows and 0 <= col < self.cols):

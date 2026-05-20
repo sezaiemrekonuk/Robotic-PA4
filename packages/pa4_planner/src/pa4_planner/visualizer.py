@@ -47,7 +47,7 @@ class Visualizer:
         self._odom_xs: List[float] = []
         self._odom_ys: List[float] = []
 
-    # ── Initial canvas ───────────────────────────────────────────────────────
+    # Initial canvas
 
     def _build_static_artists(self) -> None:
         ax = self.ax
@@ -108,7 +108,7 @@ class Visualizer:
         ax.legend(loc="upper right", fontsize=7, framealpha=0.8)
         plt.tight_layout()
 
-    # ── Public methods ───────────────────────────────────────────────────────
+    # Public methods
 
     def set_start_goal(
         self,
@@ -209,7 +209,7 @@ class Visualizer:
         else:
             self.fig.savefig("/tmp/pa4_final_map.png", dpi=120)
 
-    # ── Helpers ──────────────────────────────────────────────────────────────
+    # Helpers
 
     def _flush(self) -> None:
         self.fig.canvas.draw_idle()

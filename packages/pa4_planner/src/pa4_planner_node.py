@@ -70,10 +70,10 @@ class PA4PlannerNode(DTROS):
         m = self.cfg["map"]
         self.grid = OccupancyGrid(m["width"], m["height"], m["resolution"])
 
-        # ── Planners ─────────────────────────────────────────────────────────
+        # Planners
         self.dwa = DWAPlanner(self.cfg["dwa"])
 
-        # ── Obstacle bookkeeping ─────────────────────────────────────────────
+        # Obstacle bookkeeping
         inflate = self.robot_radius + self.safety_margin
         self.all_obstacles: List[Tuple[float, float, float]] = []
         for ox, oy in self.cfg.get("known_obstacles", []):
@@ -85,7 +85,7 @@ class PA4PlannerNode(DTROS):
             self.cfg.get("unknown_obstacles", [])
         )
 
-        # ── Odometry state ───────────────────────────────────────────────────
+        # Odometry state
         self._lock = threading.Lock()
         sx, sy = self.start
         # Use configured / inferred starting heading so the world frame and
@@ -104,7 +104,7 @@ class PA4PlannerNode(DTROS):
         self._v_curr: float = 0.0
         self._om_curr: float = 0.0
 
-        # ── ToF sensor state ─────────────────────────────────────────────────
+        # ToF sensor state
         # Latest validated forward distance reading (m). None ⇒ no recent / invalid.
         self._tof_lock = threading.Lock()
         self._tof_range: Optional[float] = None
@@ -112,7 +112,7 @@ class PA4PlannerNode(DTROS):
         # Consecutive in-band readings observed by _sense_obstacles (hysteresis).
         self._tof_stable_count: int = 0
 
-        # ── ROS interface ────────────────────────────────────────────────────
+        # ROS interface
         veh = rospy.get_param("~veh", os.environ.get("VEHICLE_NAME", "duckiebot"))
 
         self._pub_wheels = rospy.Publisher(
@@ -133,7 +133,7 @@ class PA4PlannerNode(DTROS):
             queue_size=20,
         )
 
-        # ── ToF subscriber (front-center range sensor) ───────────────────────
+        # ToF subscriber (front-center range sensor)
         if self.tof_enabled:
             tof_topic = (
                 self.tof_topic
@@ -151,7 +151,7 @@ class PA4PlannerNode(DTROS):
             self._sub_tof = None
             rospy.loginfo("[PA4] ToF disabled in config.")
 
-        # ── Visualizer ───────────────────────────────────────────────────────
+        # Visualizer
         self.viz: Optional[Visualizer] = None
         if self.cfg.get("visualization", {}).get("enabled", True):
             try:
@@ -163,7 +163,7 @@ class PA4PlannerNode(DTROS):
         rospy.loginfo("[PA4] Node initialised. Starting planner in 2 s …")
         rospy.sleep(2.0)  # let encoders settle
 
-    # ── Config parsing ────────────────────────────────────────────────────────
+    # Config parsing
 
     def _parse_cfg(self) -> None:
         r = self.cfg["robot"]
@@ -223,7 +223,7 @@ class PA4PlannerNode(DTROS):
         self.path_angle_thresh = p["angle_threshold"]
         self.path_max_drift = float(p.get("max_drift", 0.20))
 
-        # ── Approach / deceleration tuning ───────────────────────────────────
+        # Approach / deceleration tuning
         # When closer than approach_distance to the current waypoint, DWA's
         # max_v is interpolated linearly between min_approach_speed (at the
         # waypoint) and the regular max_v (at approach_distance).
@@ -233,7 +233,7 @@ class PA4PlannerNode(DTROS):
 
         self.max_backtracks = int(self.cfg.get("max_backtracks", 5))
 
-    # ── Encoder callbacks ─────────────────────────────────────────────────────
+    # Encoder callbacks
 
     def _on_left_enc(self, msg: WheelEncoderStamped) -> None:
         with self._lock:
@@ -251,7 +251,7 @@ class PA4PlannerNode(DTROS):
                 self._right_delta += msg.data - self._right_prev
                 self._right_prev = msg.data
 
-    # ── ToF callback ─────────────────────────────────────────────────────────
+    # ToF callback
 
     def _on_tof(self, msg: Range) -> None:
         """Cache the latest ToF reading; mark invalid out-of-range/NaN as None."""
@@ -302,7 +302,7 @@ class PA4PlannerNode(DTROS):
             for ox, oy, _ in self.all_obstacles
         )
 
-    # ── Odometry ─────────────────────────────────────────────────────────────
+    # Odometry
 
     def _process_odom(self) -> None:
         """Consume accumulated tick deltas and update pose. Call each control step."""
@@ -328,7 +328,7 @@ class PA4PlannerNode(DTROS):
         with self._lock:
             return (self.pose[0], self.pose[1], self.pose[2])
 
-    # ── Wheel commands ────────────────────────────────────────────────────────
+    # Wheel commands
 
     def _send_cmd(self, v: float, omega: float) -> None:
         """Publish (v m/s, omega rad/s) as normalised wheel commands."""
@@ -362,7 +362,7 @@ class PA4PlannerNode(DTROS):
             self._v_curr  = 0.0
             self._om_curr = 0.0
 
-    # ── A* global planner ─────────────────────────────────────────────────────
+    # A* global planner
 
     def _plan_astar(
         self, from_pose: Optional[Tuple[float, float, float]] = None
@@ -375,7 +375,7 @@ class PA4PlannerNode(DTROS):
         rospy.loginfo(f"[PA4] A* path: {len(raw)} cells → {len(path)} waypoints")
         return path
 
-    # ── Per-node actions ──────────────────────────────────────────────────────
+    # Per-node actions
 
     def _turn_to(
         self,
@@ -383,9 +383,6 @@ class PA4PlannerNode(DTROS):
         rate: rospy.Rate,
     ) -> None:
         """Rotate in-place until heading matches direction to target."""
-        # omega_base [rad/s]: derived from normalised wheel cmd so that
-        # v_r = +turn_speed_cmd * speed_gain  and  v_l = -turn_speed_cmd * speed_gain
-        # ⟹  omega = (v_r − v_l) / baseline = 2 × cmd × gain / baseline
         omega_base = (2.0 * self.turn_speed_cmd * self.speed_gain) / self.baseline
 
         x0, y0, _ = self._get_pose()
@@ -431,7 +428,7 @@ class PA4PlannerNode(DTROS):
         x, y, theta = self._get_pose()
         detected: List[Tuple[float, float]] = []
 
-        # ── (1) Real ToF reading ────────────────────────────────────────────
+        # Real ToF reading
         if self.tof_enabled:
             tof_d = self._get_tof_distance()
             if tof_d is not None:
@@ -468,7 +465,7 @@ class PA4PlannerNode(DTROS):
                     )
                     detected.append((ox, oy))
 
-        # ── (2) Simulated ``unknown_obstacles`` (offline / testing) ─────────
+        # Simulated ``unknown_obstacles`` (offline / testing)
         remaining = []
         for ox, oy in self.undiscovered:
             dist = math.hypot(x - ox, y - oy)
@@ -693,12 +690,12 @@ class PA4PlannerNode(DTROS):
         except Exception:
             pass  # never crash the planner due to viz error
 
-    # ── Main state machine ────────────────────────────────────────────────────
+    # Main state machine
 
     def run(self) -> None:
         rate = rospy.Rate(self.move_rate)
 
-        # ── Initial plan ─────────────────────────────────────────────────────
+        # Initial plan
         waypoints = self._plan_astar()
         if waypoints is None:
             rospy.logerr("[PA4] No path A→B at startup. Check obstacle layout.")
@@ -722,14 +719,14 @@ class PA4PlannerNode(DTROS):
             self._process_odom()
             pose = self._get_pose()
 
-            # ── Goal check ───────────────────────────────────────────────────
+            # Goal check
             if math.hypot(pose[0] - self.goal[0], pose[1] - self.goal[1]) < self.goal_tol:
                 self._stop()
                 rospy.loginfo("[PA4] ✓ Goal reached!")
                 self._update_viz(pose, active_path, None, None)
                 break
 
-            # ── Waypoints exhausted without reaching goal ─────────────────
+            # Waypoints exhausted without reaching goal
             if wp_idx >= len(active_path):
                 rospy.logwarn("[PA4] Waypoints exhausted — replanning.")
                 new_path = self._plan_astar(from_pose=pose)
@@ -773,10 +770,8 @@ class PA4PlannerNode(DTROS):
                 stuck_replans = 0
                 continue
 
-            # ─────────────────────────────────────────────────────────────────
             # Step 1: TURN to face next waypoint.
             #         Skip if direction is blocked by a known obstacle → replan.
-            # ─────────────────────────────────────────────────────────────────
             if self._direction_blocked(pose, target):
                 # Did we make any real motion since the last replan?
                 moved = math.hypot(

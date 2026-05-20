@@ -1,130 +1,97 @@
-# ═══════════════════════════════════════════════════════════════════
-#  PA4 Planner — Configuration File
-#  Instructor: change start, goal, known_obstacles, unknown_obstacles.
-#  No structural code changes required.
-#  All distances in metres, angles in radians (unless noted °).
-# ═══════════════════════════════════════════════════════════════════
-
-# ── Workspace ──────────────────────────────────────────────────────
+# Workspace
 map:
-  width: 1.5         # metres  (±adjustments permitted per assignment)
+  width: 1.5         # metres
   height: 1.5        # metres
-  resolution: 0.05   # metres per cell  →  30 × 30 grid
+  resolution: 0.05   # metres
 
-# ── Mission ────────────────────────────────────────────────────────
+# Mission
 start: [0.15, 0.15]   # (x, y) world frame, metres
 goal:  [1.35, 1.35]   # (x, y) world frame, metres
 
-# Optional initial heading (degrees, world frame). If commented out, the
-# planner assumes the robot is placed pointing along the start→goal vector
-# (i.e. ``atan2(goal_y - start_y, goal_x - start_x)``). Specify this only
-# if you physically place the robot in a different orientation; otherwise
-# leave it out so the default "facing the goal" assumption holds.
-start_theta_deg: 90.0   # robot starts physically pointing along +Y axis
+# initiate for y directly
+start_theta_deg: 0.0   # robot starts physically pointing along +Y axis
 
-# ── Obstacles ──────────────────────────────────────────────────────
-# known_obstacles  : given to A* before the run starts; added to map at init.
-# unknown_obstacles: BONUS task — NOT given to A*; discovered by sensor at runtime.
-#                    Leave empty [] for the base task.
-known_obstacles: []   # e.g.  - [0.75, 0.75]
+# Obstacles
+known_obstacles: []
 
-unknown_obstacles: []   # e.g.  - [0.40, 1.10]
+unknown_obstacles: []
 
-# ── Robot (Duckiebot DB21 defaults) ───────────────────────────────
+# Robot
 robot:
   radius: 0.10           # body radius  (m)
-  safety_margin: 0.08    # extra clearance around obstacle inflate radius  (m)
-  baseline: 0.102        # distance between driven wheels  (m)
-  wheel_radius: 0.0318   # driven wheel radius  (m)
+  safety_margin: 0.08    # clearance for inflation
+  baseline: 0.10         # distance between driven wheels  (m)
+  wheel_radius: 0.0315   # driven wheel radius  (m)
   ticks_per_rev: 135     # encoder resolution  (ticks / revolution)
-  speed_gain: 0.30       # m/s when wheel command = 1.0  — tune per battery
+  speed_gain: 0.30
 
-  # ── Motion speeds (kept deliberately slow for precision) ──────────
-  slow_speed: 0.12       # m/s  — normal forward travel
-  turn_speed_cmd: 0.12   # normalised [-1,1]  — in-place rotation (smoother)
+  # Motion speeds
+  slow_speed: 0.12
+  turn_speed_cmd: 0.12
 
-  # ── Tolerances ────────────────────────────────────────────────────
+  # Tolerances
   turn_tolerance: 0.05   # rad  — heading error to stop turning  (~2.9°)
-  wp_tolerance: 0.06     # m    — distance to declare waypoint reached
-  goal_tolerance: 0.10   # m    — distance to declare goal reached
-  wp_timeout: 40.0       # s    — max time to reach one waypoint before replan
+  wp_tolerance: 0.06
+  goal_tolerance: 0.10
+  wp_timeout: 40.0
 
-# ── DWA local planner ──────────────────────────────────────────────
+# DWA local planner
 dwa:
-  dt: 0.10              # simulation time step  (s)
-  # NOTE: keep horizon × max_v ≲ approach.distance so the trajectory never
-  # extends past the current waypoint — that's what produces the "C-shape"
-  # swing past nodes. With max_v=0.18 m/s and horizon=0.8 s ⇒ 0.144 m look-
-  # ahead, comfortably below approach.distance=0.25 m.
-  horizon: 0.80         # prediction horizon  (s)  → 8 simulation steps
+  dt: 0.10
+  horizon: 0.80
 
-  v_samples: 8          # linear velocity samples  in dynamic window
-  omega_samples: 13     # angular velocity samples (odd ⇒ ω=0 is sampled)
+  v_samples: 8
+  omega_samples: 13
 
-  max_v: 0.18           # m/s  — kept slow for precise lab navigation
-  min_v: 0.00           # m/s  — no reverse (can be negative if needed)
-  max_omega: 0.80       # rad/s
-  max_accel: 0.40       # m/s²  linear acceleration limit
-  max_dyaw: 1.20        # rad/s² angular acceleration limit
+  max_v: 0.18
+  min_v: 0.00
+  max_omega: 0.80
+  max_accel: 0.40
+  max_dyaw: 1.20
 
   # Cost weights — higher = more important
-  weight_goal: 3.50     # penalise distance to target waypoint
-  weight_path: 0.50     # penalise distance to current target (kept low so
-                        # path bias never overrides the goal term)
-  weight_obstacle: 6.00 # penalise proximity below clearance_threshold
-  weight_velocity: 0.30      # reward forward motion (prevents stopping)
-  clearance_threshold: 0.25  # m — obstacle penalty activates below this distance
+  weight_goal: 3.50
+  weight_path: 0.50
+  weight_obstacle: 6.00
+  weight_velocity: 0.30
+  clearance_threshold: 0.25
 
-# ── Sensing ────────────────────────────────────────────────────────
+# Sensing
 sensing:
-  radius: 0.40      # detection range  (m)
-  fov_deg: 270.0    # sensor field-of-view  (degrees)  — front-facing cone
+  radius: 0.40
+  fov_deg: 270.0
 
-# ── ToF sensor (real Duckiebot front-center range finder) ─────────
-# Registers obstacles in front of the robot at distance ``d`` as a
-# point at (x + d·cosθ, y + d·sinθ). Falls silent (no-op) when the
-# robot is run without a ToF publisher (e.g. pure simulation).
+# ToF sensor
 tof:
-  enabled: true            # subscribe to the ToF and register hits
-  topic: ""                # empty → /{veh}/front_center_tof_driver_node/range
-  register_min: 0.05       # m — ignore readings closer than this (sensor dead-zone)
-  register_max: 0.55       # m — ignore readings farther than this (walls, noise).
-                           # Must leave room to brake before the obstacle.
-  stable_readings: 1       # require N consecutive in-band reads before registering
-  stale_timeout: 1.0       # s — reading older than this is treated as missing
-  dedup_radius: 0.18       # m — don't re-register if existing obstacle is this
-                           # close (≥ robot.radius + safety_margin recommended)
-  mount_offset: 0.08       # m — forward distance from wheel-axle to ToF lens.
-                           # Set to 0.0 if your sensor is at the robot centre.
+  enabled: true
+  topic: ""
+  register_min: 0.05
+  register_max: 0.55
+  stable_readings: 1
+  stale_timeout: 1.0
+  dedup_radius: 0.18
+  mount_offset: 0.08
 
-# ── Approach (deceleration near current waypoint) ─────────────────
-# When ``dist_to_target < distance`` DWA's max_v is linearly interpolated
-# from ``robot.slow_speed`` down to ``min_speed`` at the waypoint. This
-# eliminates overshoot / curling past the node.
+# Approach
 approach:
-  distance: 0.25      # m — start decelerating below this distance
-  min_speed: 0.05     # m/s — minimum forward speed during final approach
+  distance: 0.25
+  min_speed: 0.05
 
-# ── Timing ─────────────────────────────────────────────────────────
+# Timing
 timing:
-  move_rate: 10        # Hz  — control loop frequency
-  sense_pause: 1.0     # s   — stationary dwell at each waypoint for sensing
-  stop_hold_ticks: 3   # how many move_rate ticks to publish (0, 0) when
-                       # braking, so the duckiebot driver actually stops
+  move_rate: 10
+  sense_pause: 1.0
+  stop_hold_ticks: 3
 
-# ── Path post-processing ───────────────────────────────────────────
+# Path post-processing
 path:
-  min_spacing: 0.20      # m    — minimum distance between kept waypoints
-  angle_threshold: 0.25  # rad  — direction change to force an extra waypoint (~14°)
-  # If the robot drifts more than this far from the current A* polyline,
-  # the path is abandoned and A* is rerun from the live pose. Set this
-  # roughly to one cell + obstacle inflation; too small ⇒ constant
-  # replanning, too large ⇒ robot can wander far from the plan.
-  max_drift: 0.20        # m
+  min_spacing: 0.20
+  angle_threshold: 0.25
+  max_drift: 0.20
 
-# ── Safety ─────────────────────────────────────────────────────────
-max_backtracks: 5   # maximum backtrack steps before declaring dead-end
+# Safety
+max_backtracks: 5
 
-# ── Visualisation ──────────────────────────────────────────────────
+# Visualisation
 visualization:
   enabled: true
