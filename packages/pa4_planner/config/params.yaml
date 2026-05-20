@@ -20,7 +20,7 @@ goal:  [1.35, 1.35]   # (x, y) world frame, metres
 # (i.e. ``atan2(goal_y - start_y, goal_x - start_x)``). Specify this only
 # if you physically place the robot in a different orientation; otherwise
 # leave it out so the default "facing the goal" assumption holds.
-# start_theta_deg: 45.0
+start_theta_deg: 90.0   # robot starts physically pointing along +Y axis
 
 # ── Obstacles ──────────────────────────────────────────────────────
 # known_obstacles  : given to A* before the run starts; added to map at init.
@@ -41,7 +41,7 @@ robot:
 
   # ── Motion speeds (kept deliberately slow for precision) ──────────
   slow_speed: 0.12       # m/s  — normal forward travel
-  turn_speed_cmd: 0.18   # normalised [-1,1]  — in-place rotation
+  turn_speed_cmd: 0.12   # normalised [-1,1]  — in-place rotation (smoother)
 
   # ── Tolerances ────────────────────────────────────────────────────
   turn_tolerance: 0.05   # rad  — heading error to stop turning  (~2.9°)
@@ -63,9 +63,9 @@ dwa:
 
   max_v: 0.18           # m/s  — kept slow for precise lab navigation
   min_v: 0.00           # m/s  — no reverse (can be negative if needed)
-  max_omega: 1.20       # rad/s
+  max_omega: 0.80       # rad/s
   max_accel: 0.40       # m/s²  linear acceleration limit
-  max_dyaw: 2.00        # rad/s² angular acceleration limit
+  max_dyaw: 1.20        # rad/s² angular acceleration limit
 
   # Cost weights — higher = more important
   weight_goal: 3.50     # penalise distance to target waypoint
