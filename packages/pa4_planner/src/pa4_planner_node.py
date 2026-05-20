@@ -88,7 +88,15 @@ class PA4PlannerNode(DTROS):
         # ── Odometry state ───────────────────────────────────────────────────
         self._lock = threading.Lock()
         sx, sy = self.start
-        self.pose = [sx, sy, 0.0]   # [x, y, theta] — world frame, metres/radians
+        # Use configured / inferred starting heading so the world frame and
+        # the robot's actual orientation agree from t=0. Without this the
+        # planner assumes θ=0 and every subsequent leg is sheared by the
+        # true initial heading.
+        self.pose = [sx, sy, self.start_theta]
+        rospy.loginfo(
+            f"[PA4] Initial pose: ({sx:.2f}, {sy:.2f}, "
+            f"{math.degrees(self.start_theta):.1f}°)"
+        )
         self._left_prev: Optional[int] = None
         self._right_prev: Optional[int] = None
         self._left_delta: int = 0
@@ -175,6 +183,20 @@ class PA4PlannerNode(DTROS):
         self.start: Tuple[float, float] = tuple(self.cfg["start"])
         self.goal:  Tuple[float, float] = tuple(self.cfg["goal"])
 
+        # Initial heading (world frame, radians). Default: assume the robot
+        # is placed pointing along the start→goal vector. This eliminates the
+        # constant heading offset that otherwise rotates the entire path
+        # (e.g. running at 30° when the actual diagonal is 45°).
+        sx, sy = self.start
+        gx, gy = self.goal
+        default_theta = math.atan2(gy - sy, gx - sx)
+        if "start_theta_deg" in self.cfg:
+            self.start_theta = math.radians(float(self.cfg["start_theta_deg"]))
+        elif "start_theta" in self.cfg:
+            self.start_theta = float(self.cfg["start_theta"])
+        else:
+            self.start_theta = default_theta
+
         s = self.cfg["sensing"]
         self.sensing_radius = s["radius"]
         self.sensing_fov = math.radians(s["fov_deg"])
@@ -199,6 +221,7 @@ class PA4PlannerNode(DTROS):
         p = self.cfg["path"]
         self.path_min_spacing = p["min_spacing"]
         self.path_angle_thresh = p["angle_threshold"]
+        self.path_max_drift = float(p.get("max_drift", 0.20))
 
         # ── Approach / deceleration tuning ───────────────────────────────────
         # When closer than approach_distance to the current waypoint, DWA's
@@ -416,11 +439,29 @@ class PA4PlannerNode(DTROS):
                 # robot's wheel-axle centre. Project the hit point from
                 # (sensor_x, sensor_y) along the robot heading by `tof_d`.
                 cos_t, sin_t = math.cos(theta), math.sin(theta)
-                sx = x + self.tof_offset * cos_t
-                sy = y + self.tof_offset * sin_t
-                ox = sx + tof_d * cos_t
-                oy = sy + tof_d * sin_t
-                if self._is_inside_map(ox, oy) and not self._is_near_known_obstacle(ox, oy):
+                sxp = x + self.tof_offset * cos_t
+                syp = y + self.tof_offset * sin_t
+                ox = sxp + tof_d * cos_t
+                oy = syp + tof_d * sin_t
+
+                # Geometric sanity: refuse to register a hit whose inflated
+                # footprint would engulf the robot itself. Such "obstacles"
+                # only ever cause the infinite blocked-replan loop because
+                # A* will never find a path that starts outside the halo.
+                # Require centre-to-centre distance ≥ inflate + a small
+                # margin (one cell). Otherwise: ignore the reading.
+                inflate = self.robot_radius + self.safety_margin
+                min_stand_off = inflate + self.grid.res
+                d_from_robot = math.hypot(ox - x, oy - y)
+
+                if d_from_robot < min_stand_off:
+                    rospy.logwarn(
+                        f"[PA4] ToF hit {tof_d:.2f} m → world "
+                        f"({ox:.2f},{oy:.2f}) is inside robot footprint "
+                        f"({d_from_robot:.2f} m < {min_stand_off:.2f} m). "
+                        f"Ignored — sensor noise or robot is touching wall."
+                    )
+                elif self._is_inside_map(ox, oy) and not self._is_near_known_obstacle(ox, oy):
                     rospy.loginfo(
                         f"[PA4] ToF hit at d={tof_d:.2f} m → "
                         f"obstacle ({ox:.2f}, {oy:.2f})"
@@ -442,13 +483,54 @@ class PA4PlannerNode(DTROS):
 
         return detected
 
+    def _path_drift(
+        self,
+        pose: Tuple[float, float, float],
+        path: List[Tuple[float, float]],
+    ) -> float:
+        """
+        Shortest perpendicular distance from the robot to the polyline
+        ``path``. Returns ``+inf`` for empty / single-point paths.
+        Used to decide when to abandon the current A* plan and replan
+        from the live pose rather than dragging the robot back onto an
+        old line that no longer reflects the current geometry.
+        """
+        if not path or len(path) < 2:
+            return float("inf")
+        px, py = pose[0], pose[1]
+        best = float("inf")
+        for (ax, ay), (bx, by) in zip(path[:-1], path[1:]):
+            dx, dy = bx - ax, by - ay
+            seg_len2 = dx * dx + dy * dy
+            if seg_len2 < 1e-9:
+                d = math.hypot(px - ax, py - ay)
+            else:
+                t = ((px - ax) * dx + (py - ay) * dy) / seg_len2
+                t = max(0.0, min(1.0, t))
+                cx, cy = ax + t * dx, ay + t * dy
+                d = math.hypot(px - cx, py - cy)
+            if d < best:
+                best = d
+        return best
+
     def _direction_blocked(
         self,
         pose: Tuple[float, float, float],
         target: Tuple[float, float],
     ) -> bool:
-        """True if the straight segment pose→target passes through a known obstacle."""
-        return self.grid.collides_segment(pose[0], pose[1], target[0], target[1])
+        """
+        True only if the straight segment pose→target passes through an
+        OCCUPIED cell (a real obstacle). INFLATED cells are NOT treated as
+        a hard block: they're a soft buffer the DWA cost handles. The
+        first ``robot.radius`` metres of the segment are also skipped so
+        the robot can move out of its own inflation halo right after a
+        close ToF registration (was the source of the infinite
+        "blocked → replan" loop).
+        """
+        return self.grid.hard_blocks_segment(
+            pose[0], pose[1], target[0], target[1],
+            ignore_radius_m=self.robot_radius,
+        )
 
     def _move_to_waypoint(
         self,
@@ -503,6 +585,21 @@ class PA4PlannerNode(DTROS):
                 self._stop()
                 self._register_new_obstacles(new_obs)
                 return False  # triggers REPLAN in caller
+
+            # Drift check: if the robot has wandered far from the global
+            # polyline (e.g. avoided an obstacle and is now well off the
+            # original A* line), don't try to "snake back" onto the stale
+            # path — bail out so the caller replans from the live pose.
+            if (
+                self.path_max_drift > 0.0
+                and len(global_path) >= 2
+                and self._path_drift((x, y, theta), global_path) > self.path_max_drift
+            ):
+                self._stop()
+                rospy.logwarn(
+                    "[PA4] Off-path drift exceeded — replanning from current pose."
+                )
+                return False
 
             with self._lock:
                 v_c  = self._v_curr
@@ -613,6 +710,12 @@ class PA4PlannerNode(DTROS):
         backtrack_count = 0
         active_path = waypoints
 
+        # Loop guard: count consecutive replans without any meaningful
+        # motion. If we trip the "Direct path blocked" branch more than a
+        # few times without moving, abort instead of spinning forever.
+        stuck_replans = 0
+        last_motion_pose = self._get_pose()
+
         rospy.loginfo("[PA4] Starting traversal …")
 
         while not rospy.is_shutdown():
@@ -643,16 +746,70 @@ class PA4PlannerNode(DTROS):
 
             target = active_path[wp_idx]
 
+            # ── Drift check ─────────────────────────────────────────────────
+            # If the robot is significantly off the current A* polyline,
+            # discard the stale plan and replan from the live pose rather
+            # than trying to crawl back onto a path that no longer makes
+            # sense (e.g. after a detour around a freshly registered
+            # obstacle).
+            if (
+                self.path_max_drift > 0.0
+                and self._path_drift(pose, active_path) > self.path_max_drift
+            ):
+                rospy.logwarn(
+                    "[PA4] Drifted off A* path — replanning from current pose."
+                )
+                new_path = self._plan_astar(from_pose=pose)
+                if new_path is None:
+                    new_path = self._backtrack(history, rate)
+                    backtrack_count += 1
+                if new_path is None or backtrack_count > self.max_backtracks:
+                    rospy.logerr("[PA4] Dead end after drift replan.")
+                    self._stop()
+                    break
+                active_path = new_path
+                wp_idx = 1
+                last_motion_pose = self._get_pose()
+                stuck_replans = 0
+                continue
+
             # ─────────────────────────────────────────────────────────────────
             # Step 1: TURN to face next waypoint.
             #         Skip if direction is blocked by a known obstacle → replan.
             # ─────────────────────────────────────────────────────────────────
             if self._direction_blocked(pose, target):
-                rospy.logwarn("[PA4] Direct path to waypoint blocked — replanning.")
-                new_path = self._plan_astar(from_pose=pose)
-                if new_path is None:
+                # Did we make any real motion since the last replan?
+                moved = math.hypot(
+                    pose[0] - last_motion_pose[0],
+                    pose[1] - last_motion_pose[1],
+                ) > max(self.wp_tol * 0.5, 0.03)
+                if moved:
+                    stuck_replans = 0
+                    last_motion_pose = pose
+                else:
+                    stuck_replans += 1
+
+                rospy.logwarn(
+                    f"[PA4] Direct path to waypoint blocked — replanning "
+                    f"(stuck_replans={stuck_replans})."
+                )
+
+                if stuck_replans > 3:
+                    rospy.logerr(
+                        "[PA4] Replanning loop without motion. Forcing "
+                        "backtrack."
+                    )
                     new_path = self._backtrack(history, rate)
                     backtrack_count += 1
+                    stuck_replans = 0
+                    last_motion_pose = self._get_pose()
+                else:
+                    new_path = self._plan_astar(from_pose=pose)
+                    if new_path is None:
+                        new_path = self._backtrack(history, rate)
+                        backtrack_count += 1
+                        last_motion_pose = self._get_pose()
+
                 if new_path is None or backtrack_count > self.max_backtracks:
                     rospy.logerr("[PA4] Dead end after block detection.")
                     self._stop()
@@ -700,6 +857,8 @@ class PA4PlannerNode(DTROS):
             if reached:
                 history.append(self._get_pose())
                 backtrack_count = 0
+                stuck_replans = 0
+                last_motion_pose = self._get_pose()
                 wp_idx += 1
             else:
                 # DWA failed or new obstacle found during movement

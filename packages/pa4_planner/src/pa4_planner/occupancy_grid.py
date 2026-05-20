@@ -86,5 +86,41 @@ class OccupancyGrid:
                 return True
         return False
 
+    def hard_blocks_segment(
+        self,
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+        ignore_radius_m: float = 0.0,
+    ) -> bool:
+        """
+        Stricter than ``collides_segment``: only the OCCUPIED (true obstacle)
+        cells block the segment. INFLATED cells (soft buffer) are not treated
+        as a hard block — the local planner handles those via cost penalty.
+
+        ``ignore_radius_m``: skip samples within this distance of the segment
+        START point. Used so the robot can move out of its own inflation
+        halo (e.g. after registering a close ToF hit) without falsely
+        reporting "blocked".
+        """
+        dist = math.hypot(x1 - x0, y1 - y0)
+        if dist < 1e-6:
+            return False
+        steps = max(2, int(dist / (self.res * 0.5)))
+        for i in range(steps + 1):
+            t = i / steps
+            seg = t * dist
+            if seg < ignore_radius_m:
+                continue
+            x = x0 + t * (x1 - x0)
+            y = y0 + t * (y1 - y0)
+            r, c = self.world_to_cell(x, y)
+            if not (0 <= r < self.rows and 0 <= c < self.cols):
+                return True
+            if self.grid[r, c] == self.OCCUPIED:
+                return True
+        return False
+
     def get_grid(self) -> np.ndarray:
         return self.grid.copy()

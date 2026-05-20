@@ -20,8 +20,15 @@ def astar(
     # Relax goal if it sits inside an obstacle
     goal_cell = _nearest_free(grid, goal_cell) or goal_cell
 
+    # Relax start the same way — the robot may currently be inside the
+    # inflation halo of a freshly registered obstacle. We then route from
+    # the nearest free cell. This is what prevents the
+    # "blocked → replan → same path → blocked" infinite loop.
     if not grid.is_free_cell(*start_cell):
-        return None
+        relaxed = _nearest_free(grid, start_cell, max_r=6)
+        if relaxed is None:
+            return None
+        start_cell = relaxed
 
     DIRS = [
         (0, 1, 1.0), (0, -1, 1.0), (1, 0, 1.0), (-1, 0, 1.0),

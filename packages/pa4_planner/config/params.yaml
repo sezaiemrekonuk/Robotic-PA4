@@ -15,6 +15,13 @@ map:
 start: [0.15, 0.15]   # (x, y) world frame, metres
 goal:  [1.35, 1.35]   # (x, y) world frame, metres
 
+# Optional initial heading (degrees, world frame). If commented out, the
+# planner assumes the robot is placed pointing along the start→goal vector
+# (i.e. ``atan2(goal_y - start_y, goal_x - start_x)``). Specify this only
+# if you physically place the robot in a different orientation; otherwise
+# leave it out so the default "facing the goal" assumption holds.
+# start_theta_deg: 45.0
+
 # ── Obstacles ──────────────────────────────────────────────────────
 # known_obstacles  : given to A* before the run starts; added to map at init.
 # unknown_obstacles: BONUS task — NOT given to A*; discovered by sensor at runtime.
@@ -109,6 +116,11 @@ timing:
 path:
   min_spacing: 0.20      # m    — minimum distance between kept waypoints
   angle_threshold: 0.25  # rad  — direction change to force an extra waypoint (~14°)
+  # If the robot drifts more than this far from the current A* polyline,
+  # the path is abandoned and A* is rerun from the live pose. Set this
+  # roughly to one cell + obstacle inflation; too small ⇒ constant
+  # replanning, too large ⇒ robot can wander far from the plan.
+  max_drift: 0.20        # m
 
 # ── Safety ─────────────────────────────────────────────────────────
 max_backtracks: 5   # maximum backtrack steps before declaring dead-end
