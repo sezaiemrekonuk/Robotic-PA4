@@ -37,18 +37,22 @@ robot:
   turn_speed_cmd: 0.18   # normalised [-1,1]  — in-place rotation
 
   # ── Tolerances ────────────────────────────────────────────────────
-  turn_tolerance: 0.08   # rad  — heading error to stop turning  (~4.5°)
-  wp_tolerance: 0.08     # m    — distance to declare waypoint reached
-  goal_tolerance: 0.12   # m    — distance to declare goal reached
+  turn_tolerance: 0.05   # rad  — heading error to stop turning  (~2.9°)
+  wp_tolerance: 0.06     # m    — distance to declare waypoint reached
+  goal_tolerance: 0.10   # m    — distance to declare goal reached
   wp_timeout: 40.0       # s    — max time to reach one waypoint before replan
 
 # ── DWA local planner ──────────────────────────────────────────────
 dwa:
   dt: 0.10              # simulation time step  (s)
-  horizon: 1.50         # prediction horizon  (s)  → 15 simulation steps
+  # NOTE: keep horizon × max_v ≲ approach.distance so the trajectory never
+  # extends past the current waypoint — that's what produces the "C-shape"
+  # swing past nodes. With max_v=0.18 m/s and horizon=0.8 s ⇒ 0.144 m look-
+  # ahead, comfortably below approach.distance=0.25 m.
+  horizon: 0.80         # prediction horizon  (s)  → 8 simulation steps
 
   v_samples: 8          # linear velocity samples  in dynamic window
-  omega_samples: 12     # angular velocity samples in dynamic window
+  omega_samples: 13     # angular velocity samples (odd ⇒ ω=0 is sampled)
 
   max_v: 0.18           # m/s  — kept slow for precise lab navigation
   min_v: 0.00           # m/s  — no reverse (can be negative if needed)
@@ -57,11 +61,12 @@ dwa:
   max_dyaw: 2.00        # rad/s² angular acceleration limit
 
   # Cost weights — higher = more important
-  weight_goal: 2.50     # penalise distance to target waypoint
-  weight_path: 1.00     # penalise distance to global A* path
+  weight_goal: 3.50     # penalise distance to target waypoint
+  weight_path: 0.50     # penalise distance to current target (kept low so
+                        # path bias never overrides the goal term)
   weight_obstacle: 6.00 # penalise proximity below clearance_threshold
-  weight_velocity: 0.50      # reward forward motion (prevents stopping)
-  clearance_threshold: 0.30  # m — obstacle penalty activates below this distance
+  weight_velocity: 0.30      # reward forward motion (prevents stopping)
+  clearance_threshold: 0.25  # m — obstacle penalty activates below this distance
 
 # ── Sensing ────────────────────────────────────────────────────────
 sensing:
@@ -76,15 +81,29 @@ tof:
   enabled: true            # subscribe to the ToF and register hits
   topic: ""                # empty → /{veh}/front_center_tof_driver_node/range
   register_min: 0.05       # m — ignore readings closer than this (sensor dead-zone)
-  register_max: 0.40       # m — ignore readings farther than this (walls, noise)
+  register_max: 0.35       # m — ignore readings farther than this (walls, noise).
+                           # Must leave room to brake before the obstacle.
   stable_readings: 2       # require N consecutive in-band reads before registering
   stale_timeout: 1.0       # s — reading older than this is treated as missing
-  dedup_radius: 0.12       # m — don't re-register if existing obstacle is this close
+  dedup_radius: 0.18       # m — don't re-register if existing obstacle is this
+                           # close (≥ robot.radius + safety_margin recommended)
+  mount_offset: 0.08       # m — forward distance from wheel-axle to ToF lens.
+                           # Set to 0.0 if your sensor is at the robot centre.
+
+# ── Approach (deceleration near current waypoint) ─────────────────
+# When ``dist_to_target < distance`` DWA's max_v is linearly interpolated
+# from ``robot.slow_speed`` down to ``min_speed`` at the waypoint. This
+# eliminates overshoot / curling past the node.
+approach:
+  distance: 0.25      # m — start decelerating below this distance
+  min_speed: 0.05     # m/s — minimum forward speed during final approach
 
 # ── Timing ─────────────────────────────────────────────────────────
 timing:
-  move_rate: 10     # Hz  — control loop frequency
-  sense_pause: 1.0  # s   — stationary dwell at each waypoint for sensing
+  move_rate: 10        # Hz  — control loop frequency
+  sense_pause: 1.0     # s   — stationary dwell at each waypoint for sensing
+  stop_hold_ticks: 3   # how many move_rate ticks to publish (0, 0) when
+                       # braking, so the duckiebot driver actually stops
 
 # ── Path post-processing ───────────────────────────────────────────
 path:

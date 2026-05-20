@@ -187,14 +187,26 @@ class PA4PlannerNode(DTROS):
         self.tof_stable_readings = max(1, int(tof.get("stable_readings", 2)))
         self.tof_stale_timeout = float(tof.get("stale_timeout", 1.0))
         self.tof_dedup_radius = float(tof.get("dedup_radius", 0.12))
+        # Forward offset of the ToF lens from the wheel-axle centre (robot origin).
+        # On DB21M the front-center ToF sits roughly at the front bumper.
+        self.tof_offset = float(tof.get("mount_offset", self.robot_radius))
 
         t = self.cfg["timing"]
         self.move_rate = t["move_rate"]
         self.sense_pause = t["sense_pause"]
+        self.stop_hold_ticks = max(1, int(t.get("stop_hold_ticks", 3)))
 
         p = self.cfg["path"]
         self.path_min_spacing = p["min_spacing"]
         self.path_angle_thresh = p["angle_threshold"]
+
+        # ── Approach / deceleration tuning ───────────────────────────────────
+        # When closer than approach_distance to the current waypoint, DWA's
+        # max_v is interpolated linearly between min_approach_speed (at the
+        # waypoint) and the regular max_v (at approach_distance).
+        ap = self.cfg.get("approach", {})
+        self.approach_distance = float(ap.get("distance", 0.25))
+        self.approach_min_speed = float(ap.get("min_speed", 0.05))
 
         self.max_backtracks = int(self.cfg.get("max_backtracks", 5))
 
@@ -315,7 +327,14 @@ class PA4PlannerNode(DTROS):
             self._om_curr = omega
 
     def _stop(self) -> None:
-        self._send_cmd(0.0, 0.0)
+        """
+        Brake. Publishes a zero wheel command and HOLDS it for
+        ``stop_hold_ticks`` consecutive sends so the driver actually
+        decelerates the motors (Duckiebot motor latency is non-zero).
+        """
+        for _ in range(self.stop_hold_ticks):
+            self._send_cmd(0.0, 0.0)
+            rospy.sleep(1.0 / max(self.move_rate, 1))
         with self._lock:
             self._v_curr  = 0.0
             self._om_curr = 0.0
@@ -393,8 +412,14 @@ class PA4PlannerNode(DTROS):
         if self.tof_enabled:
             tof_d = self._get_tof_distance()
             if tof_d is not None:
-                ox = x + tof_d * math.cos(theta)
-                oy = y + tof_d * math.sin(theta)
+                # Beam originates at the front-mounted ToF lens, not the
+                # robot's wheel-axle centre. Project the hit point from
+                # (sensor_x, sensor_y) along the robot heading by `tof_d`.
+                cos_t, sin_t = math.cos(theta), math.sin(theta)
+                sx = x + self.tof_offset * cos_t
+                sy = y + self.tof_offset * sin_t
+                ox = sx + tof_d * cos_t
+                oy = sy + tof_d * sin_t
                 if self._is_inside_map(ox, oy) and not self._is_near_known_obstacle(ox, oy):
                     rospy.loginfo(
                         f"[PA4] ToF hit at d={tof_d:.2f} m → "
@@ -432,12 +457,32 @@ class PA4PlannerNode(DTROS):
         rate: rospy.Rate,
     ) -> bool:
         """
-        DWA-guided motion toward target.
-        Returns True when waypoint reached, False on timeout or total DWA failure.
-        Also checks for undiscovered obstacles during movement.
+        DWA-guided motion toward a single waypoint.
+
+        Key behaviours that keep the trajectory clean between waypoints:
+
+        * DWA receives ONLY the current waypoint as its path reference, never
+          the future ones — otherwise the path-following term curves the
+          robot around the current node toward the next leg (the "C-shape").
+        * As the robot approaches the waypoint (``dist < approach_distance``)
+          DWA's max linear velocity is linearly scaled down toward
+          ``approach_min_speed``. The robot decelerates instead of barrelling
+          through and overshooting.
+        * ``self.dwa.plan(...)`` is given the unicycle state from odometry
+          and the latest current_v / current_om for a tight dynamic window.
+
+        Returns True when the waypoint is reached, False on timeout, total
+        DWA failure, or a newly detected obstacle (replan in caller).
+
+        ``global_path`` is accepted only for visualisation; the planner
+        substitutes ``[target]`` when calling DWA.
         """
         deadline = rospy.Time.now() + rospy.Duration(self.wp_timeout)
         consecutive_zero = 0
+
+        # DWA reference path: just the current target. Prevents the cost
+        # function from biasing the trajectory toward future waypoints.
+        dwa_ref_path = [target]
 
         while not rospy.is_shutdown():
             self._process_odom()
@@ -453,7 +498,6 @@ class PA4PlannerNode(DTROS):
                 rospy.logwarn("[PA4] Waypoint timeout.")
                 return False
 
-            # Also sense during motion (real-time unknown obstacle detection)
             new_obs = self._sense_obstacles()
             if new_obs:
                 self._stop()
@@ -464,13 +508,26 @@ class PA4PlannerNode(DTROS):
                 v_c  = self._v_curr
                 om_c = self._om_curr
 
+            # Decelerate as we get close to the waypoint to prevent overshoot.
+            if dist < self.approach_distance:
+                t = max(0.0, dist - self.wp_tol) / max(
+                    self.approach_distance - self.wp_tol, 1e-3
+                )
+                max_v_eff = (
+                    self.approach_min_speed
+                    + t * (self.slow_speed - self.approach_min_speed)
+                )
+            else:
+                max_v_eff = self.slow_speed
+
             best_v, best_om, all_trajs, best_traj = self.dwa.plan(
                 state=(x, y, theta),
                 goal=target,
-                global_path=global_path,
+                global_path=dwa_ref_path,
                 obstacles=self.all_obstacles,
                 current_v=v_c,
                 current_om=om_c,
+                max_v_override=max_v_eff,
             )
 
             if best_v == 0.0 and best_om == 0.0:
@@ -483,6 +540,8 @@ class PA4PlannerNode(DTROS):
                 consecutive_zero = 0
 
             self._send_cmd(best_v, best_om)
+            # Visualise the original (full) global path so the operator can
+            # still see where the robot is heading after this waypoint.
             self._update_viz((x, y, theta), global_path, all_trajs, best_traj)
             rate.sleep()
 

@@ -1,6 +1,6 @@
 """Dynamic Window Approach (DWA) local planner for differential-drive robot."""
 import math
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import numpy as np
 
 
@@ -44,12 +44,18 @@ class DWAPlanner:
         obstacles: List[Tuple[float, float, float]],
         current_v: float = 0.0,
         current_om: float = 0.0,
+        max_v_override: Optional[float] = None,
     ) -> Tuple[float, float, list, list]:
         """
         Returns (best_v, best_omega, all_trajectories, best_trajectory).
         all_trajectories: list of (traj_points, is_valid) for visualisation.
+
+        ``max_v_override``: when set, clips the upper bound of the linear
+        velocity dynamic window. Used by the caller to decelerate near the
+        waypoint and prevent overshoot / curving past the target.
         """
-        v_win = self._window(current_v, self.max_acc, self.min_v, self.max_v)
+        v_hi_cap = self.max_v if max_v_override is None else min(self.max_v, max_v_override)
+        v_win = self._window(current_v, self.max_acc, self.min_v, v_hi_cap)
         om_win = self._window(current_om, self.max_dyaw, -self.max_om, self.max_om)
 
         v_range = np.linspace(v_win[0], v_win[1], self.v_samples)
@@ -80,7 +86,11 @@ class DWAPlanner:
     # ── Internals ────────────────────────────────────────────────────────────
 
     def _window(self, cur: float, acc: float, lo: float, hi: float) -> Tuple:
-        return (max(lo, cur - acc * self.dt), min(hi, cur + acc * self.dt))
+        w_lo = max(lo, cur - acc * self.dt)
+        w_hi = min(hi, cur + acc * self.dt)
+        if w_lo > w_hi:
+            w_lo = w_hi = max(lo, min(hi, cur))
+        return (w_lo, w_hi)
 
     def _simulate(
         self, state: Tuple[float, float, float], v: float, om: float
