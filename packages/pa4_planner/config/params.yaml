@@ -20,7 +20,7 @@ goal:  [1.35, 1.35]   # (x, y) world frame, metres
 # unknown_obstacles: BONUS task — NOT given to A*; discovered by sensor at runtime.
 #                    Leave empty [] for the base task.
 known_obstacles:
-  - [0.75, 0.75]
+  - []
 
 unknown_obstacles: []
 
@@ -60,7 +60,7 @@ dwa:
   # Cost weights — higher = more important
   weight_goal: 2.50     # penalise distance to target waypoint
   weight_path: 1.00     # penalise distance to global A* path
-  weight_obstacle: 6.00 # reward clearance / penalise proximity
+  weight_obstacle: 6.00 # penalise proximity below clearance_threshold
   weight_velocity: 0.50      # reward forward motion (prevents stopping)
   clearance_threshold: 0.30  # m — obstacle penalty activates below this distance
 

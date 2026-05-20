@@ -254,12 +254,19 @@ class PA4PlannerNode(DTROS):
         rate: rospy.Rate,
     ) -> None:
         """Rotate in-place until heading matches direction to target."""
-        target_angle = math.atan2(target[1] - self._get_pose()[1],
-                                   target[0] - self._get_pose()[0])
-        rospy.loginfo(
-            f"[PA4] Turning to {math.degrees(target_angle):.1f}° …"
-        )
-        while not rospy.is_shutdown():
+        # omega_base [rad/s]: derived from normalised wheel cmd so that
+        # v_r = +turn_speed_cmd * speed_gain  and  v_l = -turn_speed_cmd * speed_gain
+        # ⟹  omega = (v_r − v_l) / baseline = 2 × cmd × gain / baseline
+        omega_base = (2.0 * self.turn_speed_cmd * self.speed_gain) / self.baseline
+
+        x0, y0, _ = self._get_pose()
+        target_angle = math.atan2(target[1] - y0, target[0] - x0)
+        rospy.loginfo(f"[PA4] Turning to {math.degrees(target_angle):.1f}° …")
+
+        max_iters = int(30 * self.move_rate)   # 30 s hard timeout
+        for _ in range(max_iters):
+            if rospy.is_shutdown():
+                break
             self._process_odom()
             x, y, theta = self._get_pose()
             target_angle = math.atan2(target[1] - y, target[0] - x)
@@ -269,11 +276,13 @@ class PA4PlannerNode(DTROS):
                 self._stop()
                 return
 
-            # Slow rotation: sign follows shortest arc
-            omega = self.turn_speed_cmd * self.speed_gain * math.copysign(1.0, err)
+            omega = omega_base * math.copysign(1.0, err)
             self._send_cmd(0.0, omega)
             self._update_viz(self._get_pose(), None, None, None)
             rate.sleep()
+
+        rospy.logwarn("[PA4] Turn timeout — proceeding with current heading.")
+        self._stop()
 
     def _sense_obstacles(self) -> List[Tuple[float, float]]:
         """
@@ -431,7 +440,7 @@ class PA4PlannerNode(DTROS):
             self._stop()
             return
 
-        wp_idx = 0
+        wp_idx = 1       # path[0] is start position — already there, skip it
         history: List[Tuple[float, float, float]] = []
         backtrack_count = 0
         active_path = waypoints
@@ -461,7 +470,7 @@ class PA4PlannerNode(DTROS):
                     self._stop()
                     break
                 active_path = new_path
-                wp_idx = 0
+                wp_idx = 1   # new path[0] = current pos, skip it
                 continue
 
             target = active_path[wp_idx]
@@ -481,7 +490,7 @@ class PA4PlannerNode(DTROS):
                     self._stop()
                     break
                 active_path = new_path
-                wp_idx = 0
+                wp_idx = 1   # new path[0] = current pos, skip it
                 continue
 
             self._turn_to(target, rate)
@@ -509,7 +518,7 @@ class PA4PlannerNode(DTROS):
                     self._stop()
                     break
                 active_path = new_path
-                wp_idx = 0
+                wp_idx = 1   # new path[0] = current pos, skip it
                 continue
 
             # ─────────────────────────────────────────────────────────────────
@@ -536,7 +545,7 @@ class PA4PlannerNode(DTROS):
                     self._stop()
                     break
                 active_path = new_path
-                wp_idx = 0
+                wp_idx = 1   # new path[0] = current pos, skip it
 
         if self.viz:
             self.viz.close()

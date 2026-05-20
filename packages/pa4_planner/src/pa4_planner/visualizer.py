@@ -37,7 +37,10 @@ class Visualizer:
 
         plt.ion()
         self.fig, self.ax = plt.subplots(figsize=(8, 8))
-        self.fig.canvas.manager.set_window_title("PA4 — A* + DWA Path Planner")
+        try:
+            self.fig.canvas.manager.set_window_title("PA4 — A* + DWA Path Planner")
+        except Exception:
+            pass  # headless / Agg backend has no window manager
         self._build_static_artists()
         self._dwa_lines: list = []
         self._obs_patches: list = []
