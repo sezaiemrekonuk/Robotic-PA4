@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>pa4_planner</name>
+  <version>0.0.1</version>
+  <description>
+    Assignment 4: A* global path planning with DWA local obstacle avoidance
+    for the Duckietown Duckiebot platform.
+  </description>
+  <maintainer email="student@example.com">Student</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>duckietown_msgs</depend>
+
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
+</package>

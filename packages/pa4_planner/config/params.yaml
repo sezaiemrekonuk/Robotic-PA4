@@ -1,0 +1,87 @@
+# ═══════════════════════════════════════════════════════════════════
+#  PA4 Planner — Configuration File
+#  Instructor: change start, goal, known_obstacles, unknown_obstacles.
+#  No structural code changes required.
+#  All distances in metres, angles in radians (unless noted °).
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Workspace ──────────────────────────────────────────────────────
+map:
+  width: 1.5         # metres  (±adjustments permitted per assignment)
+  height: 1.5        # metres
+  resolution: 0.05   # metres per cell  →  30 × 30 grid
+
+# ── Mission ────────────────────────────────────────────────────────
+start: [0.15, 0.15]   # (x, y) world frame, metres
+goal:  [1.35, 1.35]   # (x, y) world frame, metres
+
+# ── Obstacles ──────────────────────────────────────────────────────
+# known_obstacles  : given to A* before the run starts; added to map at init.
+# unknown_obstacles: BONUS task — NOT given to A*; discovered by sensor at runtime.
+#                    Leave empty [] for the base task.
+known_obstacles:
+  - [0.75, 0.75]
+
+unknown_obstacles: []   # e.g.  - [0.40, 1.10]
+
+# ── Robot (Duckiebot DB21 defaults) ───────────────────────────────
+robot:
+  radius: 0.10           # body radius  (m)
+  safety_margin: 0.08    # extra clearance around obstacle inflate radius  (m)
+  baseline: 0.102        # distance between driven wheels  (m)
+  wheel_radius: 0.0318   # driven wheel radius  (m)
+  ticks_per_rev: 135     # encoder resolution  (ticks / revolution)
+  speed_gain: 0.30       # m/s when wheel command = 1.0  — tune per battery
+
+  # ── Motion speeds (kept deliberately slow for precision) ──────────
+  slow_speed: 0.12       # m/s  — normal forward travel
+  turn_speed_cmd: 0.18   # normalised [-1,1]  — in-place rotation
+
+  # ── Tolerances ────────────────────────────────────────────────────
+  turn_tolerance: 0.08   # rad  — heading error to stop turning  (~4.5°)
+  wp_tolerance: 0.08     # m    — distance to declare waypoint reached
+  goal_tolerance: 0.12   # m    — distance to declare goal reached
+  wp_timeout: 40.0       # s    — max time to reach one waypoint before replan
+
+# ── DWA local planner ──────────────────────────────────────────────
+dwa:
+  dt: 0.10              # simulation time step  (s)
+  horizon: 1.50         # prediction horizon  (s)  → 15 simulation steps
+
+  v_samples: 8          # linear velocity samples  in dynamic window
+  omega_samples: 12     # angular velocity samples in dynamic window
+
+  max_v: 0.18           # m/s  — kept slow for precise lab navigation
+  min_v: 0.00           # m/s  — no reverse (can be negative if needed)
+  max_omega: 1.20       # rad/s
+  max_accel: 0.40       # m/s²  linear acceleration limit
+  max_dyaw: 2.00        # rad/s² angular acceleration limit
+
+  # Cost weights — higher = more important
+  weight_goal: 2.50     # penalise distance to target waypoint
+  weight_path: 1.00     # penalise distance to global A* path
+  weight_obstacle: 6.00 # reward clearance / penalise proximity
+  weight_velocity: 0.50      # reward forward motion (prevents stopping)
+  clearance_threshold: 0.30  # m — obstacle penalty activates below this distance
+
+# ── Sensing ────────────────────────────────────────────────────────
+sensing:
+  radius: 0.40      # detection range  (m)
+  fov_deg: 270.0    # sensor field-of-view  (degrees)  — front-facing cone
+
+# ── Timing ─────────────────────────────────────────────────────────
+timing:
+  move_rate: 10     # Hz  — control loop frequency
+  sense_pause: 1.0  # s   — stationary dwell at each waypoint for sensing
+
+# ── Path post-processing ───────────────────────────────────────────
+path:
+  min_spacing: 0.20      # m    — minimum distance between kept waypoints
+  angle_threshold: 0.25  # rad  — direction change to force an extra waypoint (~14°)
+
+# ── Safety ─────────────────────────────────────────────────────────
+max_backtracks: 5   # maximum backtrack steps before declaring dead-end
+
+# ── Visualisation ──────────────────────────────────────────────────
+visualization:
+  enabled: true

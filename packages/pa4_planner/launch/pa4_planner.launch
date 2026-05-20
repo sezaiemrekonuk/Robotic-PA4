@@ -1,0 +1,22 @@
+<!-- PA4 Path Planner launch file -->
+<launch>
+  <!-- Vehicle name: reads VEHICLE_NAME env var by default -->
+  <arg name="veh"    default="$(env VEHICLE_NAME)"/>
+  <!-- Path to config YAML — override via roslaunch argument if needed -->
+  <arg name="config" default="$(find pa4_planner)/config/params.yaml"/>
+
+  <group ns="$(arg veh)">
+    <node
+      pkg="pa4_planner"
+      type="pa4_planner_node.py"
+      name="pa4_planner_node"
+      output="screen"
+      required="true"
+      launch-prefix="">
+
+      <!-- Pass config file path and vehicle name as private params -->
+      <param name="config_file" value="$(arg config)"/>
+      <param name="veh"         value="$(arg veh)"/>
+    </node>
+  </group>
+</launch>
