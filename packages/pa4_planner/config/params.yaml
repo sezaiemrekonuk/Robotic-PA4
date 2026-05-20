@@ -19,10 +19,9 @@ goal:  [1.35, 1.35]   # (x, y) world frame, metres
 # known_obstacles  : given to A* before the run starts; added to map at init.
 # unknown_obstacles: BONUS task — NOT given to A*; discovered by sensor at runtime.
 #                    Leave empty [] for the base task.
-known_obstacles:
-  - []
+known_obstacles: []   # e.g.  - [0.75, 0.75]
 
-unknown_obstacles: []
+unknown_obstacles: []   # e.g.  - [0.40, 1.10]
 
 # ── Robot (Duckiebot DB21 defaults) ───────────────────────────────
 robot:
@@ -68,6 +67,19 @@ dwa:
 sensing:
   radius: 0.40      # detection range  (m)
   fov_deg: 270.0    # sensor field-of-view  (degrees)  — front-facing cone
+
+# ── ToF sensor (real Duckiebot front-center range finder) ─────────
+# Registers obstacles in front of the robot at distance ``d`` as a
+# point at (x + d·cosθ, y + d·sinθ). Falls silent (no-op) when the
+# robot is run without a ToF publisher (e.g. pure simulation).
+tof:
+  enabled: true            # subscribe to the ToF and register hits
+  topic: ""                # empty → /{veh}/front_center_tof_driver_node/range
+  register_min: 0.05       # m — ignore readings closer than this (sensor dead-zone)
+  register_max: 0.40       # m — ignore readings farther than this (walls, noise)
+  stable_readings: 2       # require N consecutive in-band reads before registering
+  stale_timeout: 1.0       # s — reading older than this is treated as missing
+  dedup_radius: 0.12       # m — don't re-register if existing obstacle is this close
 
 # ── Timing ─────────────────────────────────────────────────────────
 timing:

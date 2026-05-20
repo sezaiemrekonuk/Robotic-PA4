@@ -115,6 +115,20 @@ v_r = v + ω·L/2,   v_l = v − ω·L/2
 cmd = v_wheel / speed_gain   (clipped to ±1)
 ```
 
+**ToF sensor:** subscribes to `sensor_msgs/Range` on
+`/{veh}/front_center_tof_driver_node/range` (overridable via `tof.topic`).
+The callback caches the latest valid reading. During `SENSE` (and during
+`MOVE`, where sensing is also called every control tick), if the reading
+falls inside `[tof.register_min, tof.register_max]` for
+`tof.stable_readings` consecutive ticks and is not stale, the planner
+converts the beam endpoint to the world frame
+(`(x + d·cosθ, y + d·sinθ)`) and registers it as a new obstacle —
+identically to a simulated `unknown_obstacles` hit. A `tof.dedup_radius`
+check prevents the same physical obstacle from being added repeatedly
+as the robot drives past it. When `tof.enabled: false`, or when the
+ToF driver isn't publishing (e.g. desktop simulation), only the
+simulated `unknown_obstacles` list is used.
+
 #### State machine (per waypoint)
 
 ```
@@ -156,7 +170,11 @@ cmd = v_wheel / speed_gain   (clipped to ±1)
 | `robot` | slow_speed, turn_speed_cmd | Motion speed limits |
 | `dwa` | v_samples, omega_samples | Trajectory sample density |
 | `dwa` | weight_* | Cost function tuning |
-| `sensing` | radius, fov_deg | Detection range and cone |
+| `sensing` | radius, fov_deg | Simulated sensor: detection range and cone |
+| `tof` | enabled, topic | Real ToF subscriber on/off and topic override |
+| `tof` | register_min/max | Distance band that triggers an obstacle registration |
+| `tof` | stable_readings, stale_timeout | Noise / staleness filters on ToF stream |
+| `tof` | dedup_radius | Suppress re-registering obstacles already in the map |
 | `timing` | sense_pause | Dwell time at each waypoint |
 | `path` | min_spacing, angle_threshold | Waypoint density after downsampling |
 | `max_backtracks` | integer | Safety limit on backtrack depth |
@@ -165,14 +183,29 @@ cmd = v_wheel / speed_gain   (clipped to ±1)
 
 ## Bonus task — Unknown obstacle
 
-Set `unknown_obstacles` in `params.yaml` with the obstacle position(s).  
-These are **not** given to A* at startup. During `SENSE` (and also during `MOVE`), `_sense_obstacles()` checks whether any undiscovered obstacle is within `sensing.radius` metres and inside the forward FOV cone. When one is found:
+There are two complementary sources of unknown-obstacle detection, both
+flowing through `_sense_obstacles()`:
 
-1. Obstacle is added to the occupancy grid (inflated).
-2. A* re-runs from current position — path automatically avoids it.
+1. **Real ToF sensor** (default on robot). The front-center ToF beam
+   reports a distance `d`. When `d` stays inside
+   `[tof.register_min, tof.register_max]` for `tof.stable_readings`
+   consecutive sense ticks, the planner registers an obstacle at
+   `(x + d·cosθ, y + d·sinθ)` in the world frame.
+2. **Simulated list** (default off — empty list). Entries in
+   `unknown_obstacles` are hidden from A* at startup; during `SENSE`,
+   any entry within `sensing.radius` AND inside the forward FOV cone
+   is treated as just-detected. This is useful when running without a
+   physical ToF (e.g. desktop simulation).
+
+When either source fires, the same downstream logic runs:
+
+1. Obstacle is added to the occupancy grid (inflated by
+   `robot.radius + robot.safety_margin`).
+2. A* re-runs from the current pose — the path automatically avoids it.
 3. DWA continues with the updated obstacle list.
 
-This simulates the real-robot pipeline: camera or ToF detects object → coordinates converted to world frame → same map-update + replan logic.
+A `tof.dedup_radius` check prevents the same physical obstacle from
+being re-registered as the robot moves past it.
 
 ---
 

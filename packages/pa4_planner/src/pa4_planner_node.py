@@ -20,6 +20,7 @@ import numpy as np
 import rospy
 from duckietown.dtros import DTROS, NodeType
 from duckietown_msgs.msg import WheelsCmdStamped, WheelEncoderStamped
+from sensor_msgs.msg import Range
 
 # ── resolve our sibling package ──────────────────────────────────────────────
 _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -95,6 +96,14 @@ class PA4PlannerNode(DTROS):
         self._v_curr: float = 0.0
         self._om_curr: float = 0.0
 
+        # ── ToF sensor state ─────────────────────────────────────────────────
+        # Latest validated forward distance reading (m). None ⇒ no recent / invalid.
+        self._tof_lock = threading.Lock()
+        self._tof_range: Optional[float] = None
+        self._tof_last_stamp: Optional[rospy.Time] = None
+        # Consecutive in-band readings observed by _sense_obstacles (hysteresis).
+        self._tof_stable_count: int = 0
+
         # ── ROS interface ────────────────────────────────────────────────────
         veh = rospy.get_param("~veh", os.environ.get("VEHICLE_NAME", "duckiebot"))
 
@@ -115,6 +124,24 @@ class PA4PlannerNode(DTROS):
             self._on_right_enc,
             queue_size=20,
         )
+
+        # ── ToF subscriber (front-center range sensor) ───────────────────────
+        if self.tof_enabled:
+            tof_topic = (
+                self.tof_topic
+                if self.tof_topic
+                else f"/{veh}/front_center_tof_driver_node/range"
+            )
+            self._sub_tof = rospy.Subscriber(
+                tof_topic,
+                Range,
+                self._on_tof,
+                queue_size=1,
+            )
+            rospy.loginfo(f"[PA4] ToF subscribed: {tof_topic}")
+        else:
+            self._sub_tof = None
+            rospy.loginfo("[PA4] ToF disabled in config.")
 
         # ── Visualizer ───────────────────────────────────────────────────────
         self.viz: Optional[Visualizer] = None
@@ -152,6 +179,15 @@ class PA4PlannerNode(DTROS):
         self.sensing_radius = s["radius"]
         self.sensing_fov = math.radians(s["fov_deg"])
 
+        tof = self.cfg.get("tof", {})
+        self.tof_enabled = bool(tof.get("enabled", True))
+        self.tof_topic = str(tof.get("topic", "") or "")
+        self.tof_register_min = float(tof.get("register_min", 0.05))
+        self.tof_register_max = float(tof.get("register_max", self.sensing_radius))
+        self.tof_stable_readings = max(1, int(tof.get("stable_readings", 2)))
+        self.tof_stale_timeout = float(tof.get("stale_timeout", 1.0))
+        self.tof_dedup_radius = float(tof.get("dedup_radius", 0.12))
+
         t = self.cfg["timing"]
         self.move_rate = t["move_rate"]
         self.sense_pause = t["sense_pause"]
@@ -179,6 +215,57 @@ class PA4PlannerNode(DTROS):
             else:
                 self._right_delta += msg.data - self._right_prev
                 self._right_prev = msg.data
+
+    # ── ToF callback ─────────────────────────────────────────────────────────
+
+    def _on_tof(self, msg: Range) -> None:
+        """Cache the latest ToF reading; mark invalid out-of-range/NaN as None."""
+        r = float(msg.range)
+        valid = (
+            math.isfinite(r)
+            and msg.min_range <= r <= msg.max_range
+        )
+        with self._tof_lock:
+            self._tof_range = r if valid else None
+            self._tof_last_stamp = (
+                msg.header.stamp if msg.header.stamp.to_sec() > 0.0 else rospy.Time.now()
+            )
+
+    def _get_tof_distance(self) -> Optional[float]:
+        """
+        Return ToF distance (m) only if it has been observed in the registration
+        band for `tof_stable_readings` consecutive sense ticks AND is recent.
+        Otherwise returns None and resets the stability counter.
+        """
+        with self._tof_lock:
+            d = self._tof_range
+            stamp = self._tof_last_stamp
+
+        if d is None or stamp is None:
+            self._tof_stable_count = 0
+            return None
+
+        if (rospy.Time.now() - stamp).to_sec() > self.tof_stale_timeout:
+            self._tof_stable_count = 0
+            return None
+
+        if self.tof_register_min <= d <= self.tof_register_max:
+            self._tof_stable_count += 1
+        else:
+            self._tof_stable_count = 0
+
+        if self._tof_stable_count >= self.tof_stable_readings:
+            return d
+        return None
+
+    def _is_inside_map(self, x: float, y: float) -> bool:
+        return 0.0 <= x <= self.grid.width_m and 0.0 <= y <= self.grid.height_m
+
+    def _is_near_known_obstacle(self, x: float, y: float) -> bool:
+        return any(
+            math.hypot(x - ox, y - oy) < self.tof_dedup_radius
+            for ox, oy, _ in self.all_obstacles
+        )
 
     # ── Odometry ─────────────────────────────────────────────────────────────
 
@@ -286,26 +373,48 @@ class PA4PlannerNode(DTROS):
 
     def _sense_obstacles(self) -> List[Tuple[float, float]]:
         """
-        Simulates on-board sensor: any undiscovered obstacle within sensing_radius
-        AND inside the field-of-view cone is reported as newly detected.
-        In the real-robot case this would use camera / ToF data.
+        Detect new (previously unknown) obstacles from two sources:
+
+        1. Real ToF sensor — a single front-facing range beam. If the latest
+           reading lies in the registration band and stays there for
+           ``tof.stable_readings`` consecutive sense ticks, an obstacle is
+           registered at ``(x + d·cosθ, y + d·sinθ)`` in the world frame.
+        2. Simulated ``unknown_obstacles`` list — used for offline testing.
+           Any entry within ``sensing.radius`` AND inside the forward FOV
+           cone is treated as just-detected.
+
+        Returns world-frame (x, y) coordinates of newly detected obstacles.
+        Duplicates (already in the map) are filtered out.
         """
         x, y, theta = self._get_pose()
-        detected = []
-        remaining = []
+        detected: List[Tuple[float, float]] = []
 
+        # ── (1) Real ToF reading ────────────────────────────────────────────
+        if self.tof_enabled:
+            tof_d = self._get_tof_distance()
+            if tof_d is not None:
+                ox = x + tof_d * math.cos(theta)
+                oy = y + tof_d * math.sin(theta)
+                if self._is_inside_map(ox, oy) and not self._is_near_known_obstacle(ox, oy):
+                    rospy.loginfo(
+                        f"[PA4] ToF hit at d={tof_d:.2f} m → "
+                        f"obstacle ({ox:.2f}, {oy:.2f})"
+                    )
+                    detected.append((ox, oy))
+
+        # ── (2) Simulated ``unknown_obstacles`` (offline / testing) ─────────
+        remaining = []
         for ox, oy in self.undiscovered:
             dist = math.hypot(x - ox, y - oy)
             if dist <= self.sensing_radius:
-                # Check inside FOV cone (centred on current heading)
                 angle_to = math.atan2(oy - y, ox - x)
                 diff = abs(_adiff(angle_to, theta))
                 if diff <= self.sensing_fov / 2.0:
                     detected.append((ox, oy))
                     continue
             remaining.append((ox, oy))
-
         self.undiscovered = remaining
+
         return detected
 
     def _direction_blocked(
